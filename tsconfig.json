@@ -1,0 +1,13 @@
+{
+    "compilerOptions": {
+        "outDir": "./dist",
+        "sourceMap": true,
+        "noImplicitAny": true,
+        "strictNullChecks": true,
+        "allowSyntheticDefaultImports": true,
+        "module": "ES6",
+        "target": "ES5",
+        "jsx": "react",
+        "moduleResolution": "node",
+    }
+}

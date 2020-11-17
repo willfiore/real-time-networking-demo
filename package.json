@@ -1,0 +1,38 @@
+{
+  "name": "fast_paced_networking_demo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/willfiore/real-time-networking-demo.git"
+  },
+  "version": "1.0.0",
+  "description": "",
+  "private": true,
+  "scripts": {
+    "build": "webpack",
+    "start": "webpack-dev-server --open"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/lodash": "^4.14.165",
+    "@types/react": "^16.9.56",
+    "@types/react-dom": "^16.9.9",
+    "clean-webpack-plugin": "^3.0.0",
+    "css-loader": "^4.3.0",
+    "file-loader": "^6.2.0",
+    "html-webpack-plugin": "^4.5.0",
+    "sass": "^1.29.0",
+    "sass-loader": "^10.1.0",
+    "style-loader": "^1.3.0",
+    "ts-loader": "^8.0.11",
+    "typescript": "^4.0.5",
+    "webpack": "^5.4.0",
+    "webpack-dev-server": "^3.11.0",
+    "webpack-merge": "^5.4.0"
+  },
+  "dependencies": {
+    "lodash": "^4.17.20",
+    "webpack-cli": "^4.2.0"
+  }
+}
