@@ -140,7 +140,7 @@ function initAppState() {
                 sim: {
                     latency: 60.0,
                     jitter: 10.0,
-                    packetLoss: 0.2,
+                    packetLoss: 0.1,
                     inFlightMessages: []
                 },
                 lastReceivedTick: 0,
