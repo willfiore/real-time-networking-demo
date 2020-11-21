@@ -1,13 +1,9 @@
 # Real-time networking demo
 
-![build](https://github.com/willfiore/real-time-networking-demo/workflows/build/badge.svg?branch=main)
+![build](https://github.com/willfiore/real-time-networking-demo/workflows/build/badge.svg?branch=main)   
+[**View demo in browser**](https://willfiore.github.io/real-time-networking-demo/)
 
-----
-
-[View in browser](https://willfiore.github.io/real-time-networking-demo/)
-
-----
-
+---
 Demo for real-time networking (e.g. for video games)
 
 How to handle:

@@ -3,13 +3,7 @@ const HtmlWebpackPlugin = require('html-webpack-plugin');
 const { CleanWebpackPlugin } = require('clean-webpack-plugin');
 
 module.exports = {
-    mode: 'production',
     entry: './src/index.ts',
-    // devtool: 'inline-source-map',
-    devServer: {
-        contentBase: './dist',
-        publicPath: '/a74b6b67-29eb-42ec-86e4-123063765e2f/'
-    },
     plugins: [
         new CleanWebpackPlugin(),
         new HtmlWebpackPlugin({
@@ -19,11 +13,6 @@ module.exports = {
     output: {
         filename: 'bundle.js',
         path: path.resolve(__dirname, 'dist'),
-    },
-    devServer: {
-        host: "127.0.0.1",
-        port: "80",
-        disableHostCheck: true,
     },
     module: {
         rules: [
