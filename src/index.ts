@@ -3,7 +3,6 @@ import { cloneDeep } from "lodash";
 import { lerp } from "./math";
 
 const NUM_ENTITIES = 2;
-const NUM_PANES = 4;
 
 const SERVER_TICK_DURATION = 1.0 / 20.0;
 
@@ -13,8 +12,7 @@ type Entity = {
     speed: number,
     angle: number,
     angularVelocity: number,
-    htmlElement: HTMLElement | null,
-    rawHtmlElement: HTMLElement | null
+    htmlElement: HTMLElement | null
 }
 
 type Game = {
@@ -110,7 +108,7 @@ type Client = {
 
 type App = {
     server: Server,
-    clients: Client[]
+    client: Client
 }
 
 const app: App = {
@@ -120,7 +118,27 @@ const app: App = {
         tickAccumulator: 0.0,
         game: { entities: [] }
     },
-    clients: []
+    client: {
+        game: { entities: [] },
+        net: {
+            sim: {
+                latency: 60.0,
+                jitter: 20.0,
+                packetLoss: 0.1,
+                inFlightMessages: []
+            },
+            lastReceivedTick: 0,
+            backBuffer: [],
+            interpolationDelay: 10.0
+        },
+
+        tick: 0,
+        tickDuration: SERVER_TICK_DURATION,
+        tickAccumulator: 0,
+
+        prevNetState: null,
+        nextNetState: null
+    }
 }
 
 // Expose app state to window (so it's accessible from the browser console)
@@ -130,43 +148,15 @@ declare global {
 window.app = app;
 
 function initAppState() {
-
-    // The first pane is the server, the remaining panes are the clients.
-    // Initialise client game states for NUM_PANES - 1
-    for (let i = 0; i < NUM_PANES - 1; ++i) {
-        app.clients.push({
-            game: { entities: [] },
-            net: {
-                sim: {
-                    latency: 60.0,
-                    jitter: 10.0,
-                    packetLoss: 0.1,
-                    inFlightMessages: []
-                },
-                lastReceivedTick: 0,
-                backBuffer: [],
-                interpolationDelay: 6.0
-            },
-
-            tick: 0,
-            tickDuration: SERVER_TICK_DURATION,
-            tickAccumulator: 0,
-
-            prevNetState: null,
-            nextNetState: null
-        })
-    }
-
-    for (let i = 0; i < NUM_PANES; ++i) {
+    // Initialise server and client entities
+    for (let i = 0; i < 2; ++i) {
         for (let j = 0; j < NUM_ENTITIES; ++j) {
-
             const entity: Entity = {
                 position: { x: 0.5, y: 0.5 },
                 speed: 0.0,
                 angle: 0.0,
                 angularVelocity: 0.0,
-                htmlElement: null,
-                rawHtmlElement: null
+                htmlElement: null
             };
 
             // Only initialise server entities properly.
@@ -183,66 +173,52 @@ function initAppState() {
 
                 app.server.game.entities.push(entity);
             } else {
-                app.clients[i - 1].game.entities.push(entity);
+                app.client.game.entities.push(entity);
             }
-
         }
     }
 }
 
-function domCreatePanes() {
-    for (let i = 0; i < NUM_PANES; ++i) {
-        const elPane = document.createElement("div");
-        elPane.className = "pane";
-        elPane.id = `pane-${i}`;
+function domCreateElements() {
+    const elPane = document.createElement("div");
+    elPane.className = "pane";
 
-        const elLabel = document.createElement("div");
-        elLabel.className = "label";
-        elLabel.innerText = i === 0 ? "Server" : "Client";
+    for (let i = 0; i < NUM_ENTITIES; ++i) {
+        for (let k = 0; k < 2; ++k) {
 
-        for (let j = 0; j < NUM_ENTITIES; ++j) {
+            const elEntity = document.createElement("div");
+            elEntity.className = "entity";
+            if (k === 0) elEntity.className += " ghost";
 
-            // Draw two versions of each entity:
-            // - One for drawnig the entity as received by the client
-            // - One for the interpolated entity after netcode handling
-            for (let k = 0; k < 2; ++k) {
-
-                const elEntity = document.createElement("div");
-                elEntity.className = "entity";
-                if (k === 1) elEntity.className += " raw";
-
-                let color;
-                switch (j % 4) {
-                    case 0: color  = "red"; break;
-                    case 1: color  = "green"; break;
-                    case 2: color  = "blue"; break;
-                    case 3: color  = "orange"; break;
-                    default: color = "black"; break;
-                }
-                elEntity.style.backgroundColor = color;
-
-                if (i === 0) {
-                    if (k === 0) {
-                        app.server.game.entities[j].htmlElement = elEntity;
-                    } else {
-                        app.server.game.entities[j].rawHtmlElement = elEntity;
-                    }
-                } else {
-                    if (k === 0) {
-                        app.clients[i - 1].game.entities[j].htmlElement = elEntity;
-                    } else {
-                        app.clients[i - 1].game.entities[j].rawHtmlElement = elEntity;
-                    }
-                }
-
-                elPane.append(elEntity);
+            let color;
+            switch (i % 4) {
+                case 0:  color = "red"; break;
+                case 1:  color = "green"; break;
+                case 2:  color = "blue"; break;
+                case 3:  color = "orange"; break;
+                default: color = "black"; break;
             }
+            elEntity.style.backgroundColor = color;
+
+            switch (k) {
+                case 0: {
+                    app.server.game.entities[i].htmlElement = elEntity;
+                } break;
+
+                case 1: {
+                    app.client.game.entities[i].htmlElement = elEntity;
+                } break;
+
+                // case 2: {
+
+                // } break;
+            }
+
+            elPane.append(elEntity);
         }
-
-        elPane.append(elLabel);
-
-        document.getElementById("root")!.append(elPane);
     }
+
+    document.getElementById("root")!.append(elPane);
 }
 
 function serverTick(dt: number) {
@@ -297,7 +273,7 @@ function serverNetSend() {
     };
 
     // Simulate sending data over the network, for each client
-    app.clients.forEach(client => {
+    [app.client].forEach(client => {
         // Simulate packet loss
         const shouldDropPacket = Math.random() < client.net.sim.packetLoss;
         if (shouldDropPacket) return;
@@ -316,9 +292,11 @@ function serverNetSend() {
 
 function onReceiveServerMessage(client: Client, message: ServerNetMessage) {
 
-    // Ignore out-of-order messages. Old messages are no longer relevant,
-    // because future network updates should be redundant up to the last
-    // acknowledged tick by the client.
+    // Ignore out-of-order messages. Old messages are no longer relevant, because:
+    // 1. reliable messages (events) are redundantly included in future packets
+    // 2. unreliable messages (e.g. entity positions) are calculated against a
+    // diff of last acked gamestate for the client. Old positions aren't useful
+    // to the client, it can just lerp to the latest position
     if (message.tick < client.net.lastReceivedTick) {
         return;
     }
@@ -327,17 +305,6 @@ function onReceiveServerMessage(client: Client, message: ServerNetMessage) {
     // Push the message to the back-buffer
     client.net.backBuffer.push(cloneDeep(message));
 
-    message.entityPositions.forEach((pos, idx) => {
-
-        const elEntity = client.game.entities[idx].rawHtmlElement!;
-
-        const parentWidth  = elEntity.parentElement!.clientWidth;
-        const parentHeight = elEntity.parentElement!.clientHeight;
-
-        elEntity.style.transform =
-           `translateX(${pos.x * (parentWidth - 20)}px)
-            translateY(${pos.y * (parentHeight - 20)}px)`;
-    });
 }
 
 let lastFrameTime: number = 0;
@@ -361,7 +328,7 @@ function frameStep(t: number) {
     }
 
     // Client updates
-    app.clients.forEach(client => {
+    [app.client].forEach(client => {
         // Handle received data from the network
         client.net.sim.inFlightMessages =
         client.net.sim.inFlightMessages.filter(inFlightMessage => {
@@ -449,15 +416,10 @@ function frameStep(t: number) {
     });
 
     // Draw
-    for (let i = 0; i < NUM_PANES; ++i) {
+    [app.client.game, app.server.game].forEach(game => {
+        for (let i = 0; i < NUM_ENTITIES; ++i) {
 
-        let game = (i === 0) ?
-            app.server.game :
-            app.clients[i - 1].game;
-
-        for (let j = 0; j < NUM_ENTITIES; ++j) {
-
-            let entityData = game.entities[j];
+            let entityData = game.entities[i];
             const elEntity = entityData.htmlElement;
 
             if (elEntity !== null) {
@@ -468,12 +430,12 @@ function frameStep(t: number) {
                                             translateY(${entityData.position.y * (parentHeight - 20)}px)`;
             }
         }
-    }
+    });
 }
 
 function main() {
     initAppState();
-    domCreatePanes();
+    domCreateElements();
 
     function animationFrame(t: number) {
         frameStep(t);

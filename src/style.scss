@@ -45,26 +45,22 @@ body {
     width: 100%;
     height: 100%;
 
-    background: rgb(90, 90, 90);
+    background: rgb(20, 20, 20);
 
     gap: 4px;
 
     display: grid;
-    grid-template-rows: auto auto;
-    grid-template-columns: auto auto;
+    place-items: center;
 }
 
 .pane {
     background-color: white;
-
-    position: relative;
     overflow: hidden;
 
-    background-color: rgb(251, 255, 230);
-
-    &#pane-0 {
-        background-color: rgb(230, 249, 255);
-    }
+    border-radius: 4px;
+    position: relative;
+    width: 640px;
+    height: 480px;
 
     .label {
         position: absolute;
@@ -89,7 +85,7 @@ body {
 
         transform-box: content-box;
 
-        &.raw {
+        &.ghost {
             opacity: 0.3;
         }
     }
