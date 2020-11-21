@@ -1,8 +1,8 @@
 import "./style.scss"
-import { cloneDeep } from "lodash";
+import { cloneDeep, update } from "lodash";
 import { lerp } from "./math";
 
-const NUM_ENTITIES = 2;
+const NUM_ENTITIES = 4;
 
 const SERVER_TICK_DURATION = 1.0 / 20.0;
 
@@ -11,8 +11,7 @@ type Entity = {
     position: Vec2,
     speed: number,
     angle: number,
-    angularVelocity: number,
-    htmlElement: HTMLElement | null
+    angularVelocity: number
 }
 
 type Game = {
@@ -41,6 +40,8 @@ type ClientInFlightMessage = {
      */
     timeRemaining: number
 }
+
+type EntityHtmlElementGroup = (HTMLElement | null)[];
 
 type Client = {
     game: Game,
@@ -103,7 +104,11 @@ type Client = {
     tickDuration: number,
 
     prevNetState: ServerNetMessage | null,
-    nextNetState: ServerNetMessage | null
+    nextNetState: ServerNetMessage | null,
+
+    display: {
+        entityHtmlElements: EntityHtmlElementGroup[]
+    }
 }
 
 type App = {
@@ -122,14 +127,14 @@ const app: App = {
         game: { entities: [] },
         net: {
             sim: {
-                latency: 60.0,
+                latency: 120.0,
                 jitter: 20.0,
-                packetLoss: 0.1,
+                packetLoss: 0.05,
                 inFlightMessages: []
             },
             lastReceivedTick: 0,
             backBuffer: [],
-            interpolationDelay: 10.0
+            interpolationDelay: 4.0
         },
 
         tick: 0,
@@ -137,7 +142,11 @@ const app: App = {
         tickAccumulator: 0,
 
         prevNetState: null,
-        nextNetState: null
+        nextNetState: null,
+
+        display: {
+            entityHtmlElements: []
+        }
     }
 }
 
@@ -156,7 +165,6 @@ function initAppState() {
                 speed: 0.0,
                 angle: 0.0,
                 angularVelocity: 0.0,
-                htmlElement: null
             };
 
             // Only initialise server entities properly.
@@ -184,11 +192,14 @@ function domCreateElements() {
     elPane.className = "pane";
 
     for (let i = 0; i < NUM_ENTITIES; ++i) {
-        for (let k = 0; k < 2; ++k) {
+
+        const htmlElements: EntityHtmlElementGroup = [];
+
+        for (let k = 0; k < 3; ++k) {
 
             const elEntity = document.createElement("div");
             elEntity.className = "entity";
-            if (k === 0) elEntity.className += " ghost";
+            if (k !== 2) elEntity.className += " ghost";
 
             let color;
             switch (i % 4) {
@@ -199,23 +210,12 @@ function domCreateElements() {
                 default: color = "black"; break;
             }
             elEntity.style.backgroundColor = color;
-
-            switch (k) {
-                case 0: {
-                    app.server.game.entities[i].htmlElement = elEntity;
-                } break;
-
-                case 1: {
-                    app.client.game.entities[i].htmlElement = elEntity;
-                } break;
-
-                // case 2: {
-
-                // } break;
-            }
+            htmlElements[k] = elEntity;
 
             elPane.append(elEntity);
         }
+
+        app.client.display.entityHtmlElements.push(htmlElements);
     }
 
     document.getElementById("root")!.append(elPane);
@@ -224,7 +224,7 @@ function domCreateElements() {
 function serverTick(dt: number) {
     const serverEntities = app.server.game.entities;
 
-    serverEntities.forEach(entity => {
+    serverEntities.forEach((entity, idx) => {
 
         if (Math.random() < 0.05) {
             entity.angularVelocity = (2 * Math.random() - 1);
@@ -260,6 +260,10 @@ function serverTick(dt: number) {
         if (entity.angle < 0) {
             entity.angle += 2 * Math.PI;
         }
+
+        // Update display
+        const elEntity = app.client.display.entityHtmlElements[idx][0]!;
+        updateEntityElementPosition(elEntity, entity.position.x, entity.position.y);
     });
 
     app.server.tick++;
@@ -290,6 +294,14 @@ function serverNetSend() {
     });
 }
 
+function updateEntityElementPosition(el: HTMLElement, x: number, y: number) {
+    const parentWidth = el.parentElement!.clientWidth;
+    const parentHeight = el.parentElement!.clientHeight;
+
+    el.style.transform = `translateX(${x * (parentWidth - 20)}px)
+                          translateY(${y * (parentHeight - 20)}px)`;
+}
+
 function onReceiveServerMessage(client: Client, message: ServerNetMessage) {
 
     // Ignore out-of-order messages. Old messages are no longer relevant, because:
@@ -305,6 +317,11 @@ function onReceiveServerMessage(client: Client, message: ServerNetMessage) {
     // Push the message to the back-buffer
     client.net.backBuffer.push(cloneDeep(message));
 
+    // Update display for received entities
+    message.entityPositions.forEach((entity, idx) => {
+        const elEntity = client.display.entityHtmlElements[idx][1]!;
+        updateEntityElementPosition(elEntity, entity.x, entity.y);
+    });
 }
 
 let lastFrameTime: number = 0;
@@ -415,22 +432,14 @@ function frameStep(t: number) {
         });
     });
 
-    // Draw
-    [app.client.game, app.server.game].forEach(game => {
-        for (let i = 0; i < NUM_ENTITIES; ++i) {
+    // Draw client entities
+    for (let i = 0; i < NUM_ENTITIES; ++i) {
 
-            let entityData = game.entities[i];
-            const elEntity = entityData.htmlElement;
+        let entityData = app.client.game.entities[i];
+        const elEntity = app.client.display.entityHtmlElements[i][2]!;
 
-            if (elEntity !== null) {
-                const parentWidth = elEntity.parentElement!.clientWidth;
-                const parentHeight = elEntity.parentElement!.clientHeight;
-
-                elEntity.style.transform = `translateX(${entityData.position.x * (parentWidth - 20)}px)
-                                            translateY(${entityData.position.y * (parentHeight - 20)}px)`;
-            }
-        }
-    });
+        updateEntityElementPosition(elEntity, entityData.position.x, entityData.position.y);
+    }
 }
 
 function main() {
