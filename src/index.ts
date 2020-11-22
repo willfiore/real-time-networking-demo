@@ -1,10 +1,10 @@
 import "./style.scss"
 import { cloneDeep, update } from "lodash";
-import { lerp } from "./math";
+import { damp, lerp } from "./math";
 
 const NUM_ENTITIES = 4;
 
-const SERVER_TICK_DURATION = 1.0 / 20.0;
+const SERVER_TICK_DURATION = 1.0 / 90.0;
 
 type Vec2 = { x: number, y: number }
 type Entity = {
@@ -46,6 +46,9 @@ type EntityHtmlElementGroup = (HTMLElement | null)[];
 type Client = {
     game: Game,
     net: {
+        /**
+         * Network conditions / data driving the simulation
+         */
         sim: {
             /**
              * Latency (network round-trip time) to server, in milliseconds
@@ -69,6 +72,17 @@ type Client = {
              */
             inFlightMessages: ClientInFlightMessage[],
         },
+
+        /**
+         * Network conditions as measured on the client-side
+         */
+        measured: {
+            latency:    number,
+            jitter:     number,
+            packetLoss: number,
+
+            jitterBackBuffer: number[],
+        }
 
         /**
          * Last received tick from the server
@@ -95,6 +109,7 @@ type Client = {
      */
     tick: number,
     tickAccumulator: number,
+    clockPaused: boolean,
 
     /** 
      * Client tick duration. Used to speed up and slow down the clock. In ideal
@@ -127,18 +142,26 @@ const app: App = {
         game: { entities: [] },
         net: {
             sim: {
-                latency: 120.0,
-                jitter: 20.0,
-                packetLoss: 0.05,
+                latency:    200.0,
+                jitter:     0.0,
+                packetLoss: 0.0,
                 inFlightMessages: []
+            },
+            measured: {
+                latency:    0.0,
+                jitter:     0.0,
+                packetLoss: 0.0,
+
+                jitterBackBuffer: [],
             },
             lastReceivedTick: 0,
             backBuffer: [],
-            interpolationDelay: 4.0
+            interpolationDelay: 2.0,
         },
 
         tick: 0,
         tickDuration: SERVER_TICK_DURATION,
+        clockPaused: false,
         tickAccumulator: 0,
 
         prevNetState: null,
@@ -302,28 +325,6 @@ function updateEntityElementPosition(el: HTMLElement, x: number, y: number) {
                           translateY(${y * (parentHeight - 20)}px)`;
 }
 
-function onReceiveServerMessage(client: Client, message: ServerNetMessage) {
-
-    // Ignore out-of-order messages. Old messages are no longer relevant, because:
-    // 1. reliable messages (events) are redundantly included in future packets
-    // 2. unreliable messages (e.g. entity positions) are calculated against a
-    // diff of last acked gamestate for the client. Old positions aren't useful
-    // to the client, it can just lerp to the latest position
-    if (message.tick < client.net.lastReceivedTick) {
-        return;
-    }
-    client.net.lastReceivedTick = message.tick;
-
-    // Push the message to the back-buffer
-    client.net.backBuffer.push(cloneDeep(message));
-
-    // Update display for received entities
-    message.entityPositions.forEach((entity, idx) => {
-        const elEntity = client.display.entityHtmlElements[idx][1]!;
-        updateEntityElementPosition(elEntity, entity.x, entity.y);
-    });
-}
-
 let lastFrameTime: number = 0;
 
 function frameStep(t: number) {
@@ -345,7 +346,71 @@ function frameStep(t: number) {
     }
 
     // Client updates
+    function onReceiveServerMessage(client: Client, message: ServerNetMessage) {
+
+        // Calculate the difference between our client clock (expected time of receipt) vs.
+        // actual time of receipt
+        const clientTime = client.tick + (client.tickAccumulator / client.tickDuration);
+        const clockDiffForPacket = message.tick - clientTime;
+
+        client.net.measured.jitterBackBuffer.push(clockDiffForPacket);
+
+        // Calculate the average delay over a period of time. The idea is to
+        // cancel out jitter to get an absolute difference between the server
+        // clock (as received) and our clock
+        const MAX_JITTER_ROLLING_AVERAGE = 5;
+
+        if (client.net.measured.jitterBackBuffer.length > MAX_JITTER_ROLLING_AVERAGE) {
+            client.net.measured.jitterBackBuffer.splice(0,
+                client.net.measured.jitterBackBuffer.length - MAX_JITTER_ROLLING_AVERAGE);
+        }
+
+        // The clock difference between packets as received and our client clock
+        const clockDiff = client.net.measured.jitterBackBuffer.reduce((a, c) => a + c, 0.0) /
+            client.net.measured.jitterBackBuffer.length;
+
+        // Appropriately speed up or slow down our simulation to bring ourselves
+        // back in line with the server clock
+        client.tickDuration = Math.max(
+            SERVER_TICK_DURATION * 0.9,
+            SERVER_TICK_DURATION - (0.01 * (clockDiff * SERVER_TICK_DURATION))
+        );
+
+        // console.log("Clock multiplier", client.tickDuration / SERVER_TICK_DURATION);
+
+        // const jitterMax =
+        //     client.net.measured.jitterBackBuffer.reduce((a, c) => Math.max(Math.abs(c - jitterAv), a), 0.0);
+
+        // Ignore out-of-order messages. Old messages are no longer relevant, because:
+        // 1. reliable messages (events) are redundantly included in future packets
+        // 2. unreliable messages (e.g. entity positions) are calculated against a
+        // diff of last acked gamestate for the client. Old positions aren't useful
+        // to the client, it can just lerp to the latest position
+
+        if (message.tick < client.net.lastReceivedTick) {
+            return;
+        }
+        client.net.lastReceivedTick = message.tick;
+
+        if (client.clockPaused) {
+            console.log("Clock resumed", client.tick, client.tickAccumulator, message.tick);
+            client.clockPaused = false;
+            client.tick = message.tick;
+            client.tickAccumulator = 0.0;
+        }
+
+        // Push the message to the back-buffer
+        client.net.backBuffer.push(cloneDeep(message));
+
+        // Update display for received entities
+        message.entityPositions.forEach((entity, idx) => {
+            const elEntity = client.display.entityHtmlElements[idx][1]!;
+            updateEntityElementPosition(elEntity, entity.x, entity.y);
+        });
+    }
+
     [app.client].forEach(client => {
+
         // Handle received data from the network
         client.net.sim.inFlightMessages =
         client.net.sim.inFlightMessages.filter(inFlightMessage => {
@@ -359,27 +424,47 @@ function frameStep(t: number) {
             return true;
         });
 
-        client.tickAccumulator += rdt;
+        // Update client clock
+        {
+            if (!client.clockPaused) {
+                client.tickAccumulator += rdt;
 
-        while (client.tickAccumulator > client.tickDuration) {
-            client.tickAccumulator -= client.tickDuration;
-            client.tick++;
-        }
-
-        // Reset the client clock if it's fallen too far behind
-        if (client.net.backBuffer.length > 0) {
-            const mostRecent = client.net.backBuffer[client.net.backBuffer.length - 1];
-            if (mostRecent.tick < client.tick) {
-                client.tick = mostRecent.tick;
-                client.tickAccumulator = 0.0;
+                while (client.tickAccumulator > client.tickDuration) {
+                    client.tickAccumulator -= client.tickDuration;
+                    client.tick++;
+                }
             }
+
+            // TODO(WF): Temp hack, fix
+            // Reset the client clock if it's fallen too far behind
+            // if (client.net.backBuffer.length > 0) {
+            //     const mostRecent = client.net.backBuffer[client.net.backBuffer.length - 1];
+            //     if (mostRecent.tick <= client.tick) {
+            //         client.tick = mostRecent.tick;
+            //         client.tickAccumulator = 0.0;
+            //     }
+            // }
         }
 
-        // Find the two network states that enclose our target time, determined
-        // by the interpolation delay
+        // client.net.clockDelay = damp(client.net.clockDelay, client.net.targetClockDelay, 4, rdt);
+
+        // The time in ticks which we want to draw
         const targetSubTick = client.tick
                                 + (client.tickAccumulator / client.tickDuration)
                                 - client.net.interpolationDelay;
+
+        // Client clock is too far ahead (server is stalling, latency increased, etc.)
+        // Pause the client clock until we receive some net data
+        if (client.net.backBuffer.length === 0 ||
+            targetSubTick > client.net.backBuffer[client.net.backBuffer.length - 1].tick) {
+
+            if (!app.client.clockPaused) {
+                console.log("Clock paused");
+                app.client.clockPaused = true;
+            }
+
+            return;
+        }
 
         // Upper bound. The state that we will be interpolating towards
         const nextNetStateIdx = client.net.backBuffer.findIndex(message =>
@@ -390,7 +475,7 @@ function frameStep(t: number) {
         client.prevNetState = nextNetStateIdx > 0 ? 
             client.net.backBuffer[nextNetStateIdx - 1] : null;
 
-        client.nextNetState = client.net.backBuffer[nextNetStateIdx];
+        client.nextNetState = client.net.backBuffer[nextNetStateIdx] ?? null;
 
         // Remove old unneeded elements from the back buffer
         client.net.backBuffer.splice(0, nextNetStateIdx - 1);

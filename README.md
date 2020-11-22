@@ -13,9 +13,6 @@ How to handle:
 - Jitter
 
 # Todo
-- [ ] Data redundancy
 - [ ] Automatic interpolation delay calculation
-- [ ] Automatic clock adjustment for latency changes
 - [ ] Prediction (extrapolation)
 - [ ] UI controls
-- [ ] Improve display to show server overlay and entire state history on a single panel
